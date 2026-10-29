@@ -18,6 +18,7 @@ tests
 !.env.example
 *.log
 db.sqlite3
+uploads
 Dockerfile
 docker-compose.yml
 README.md

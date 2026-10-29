@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     database_echo: bool = False
     auto_create_tables: bool = False
 
+    upload_dir: str = "uploads"
+    media_url_prefix: str = "/media"
+    max_image_size_bytes: int = 5 * 1024 * 1024
+
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173"]
     )

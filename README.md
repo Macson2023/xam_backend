@@ -1,6 +1,6 @@
 # xam_backend
 
-Бэкенд мессенджера (MVP): регистрация, личные диалоги, обмен текстовыми сообщениями в реальном времени и статус присутствия (online/offline).
+Бэкенд мессенджера (MVP): регистрация, личные диалоги, обмен текстовыми сообщениями и изображениями в реальном времени и статус присутствия (online/offline).
 
 ## Стек
 
@@ -73,10 +73,15 @@ tests/                   # pytest: REST + WebSocket (TestClient и реальн�
 | Метод | Путь | Описание |
 | --- | --- | --- |
 | POST | `/api/v1/chats/{chat_id}/messages` | Отправка: `{ "content": "...", "client_message_id": "uuid" }`. `client_message_id` опционален и обеспечивает идемпотентность |
+| POST | `/api/v1/chats/{chat_id}/images` | Отправка изображения: `multipart/form-data` с полем `file`, опциональными `caption` (до 4000 символов) и `client_message_id` |
 | GET | `/api/v1/chats/{chat_id}/messages?limit=50&before=` | История, cursor-based пагинация по `created_at` (новые сначала); `next_cursor` в ответе |
 | POST | `/api/v1/chats/{chat_id}/read` | Пометить входящие сообщения чата прочитанными |
 
-После сохранения сообщения событие `new_message` рассылается всем активным сессиям обоих участников.
+После сохранения сообщения (текстового или изображения) событие `new_message` рассылается всем активным сессиям обоих участников.
+
+Изображения принимаются в форматах JPEG, PNG, GIF и WEBP; тип определяется по содержимому файла, а не по заголовку `Content-Type`. Максимальный размер задаётся `MAX_IMAGE_SIZE_BYTES` (по умолчанию 5 МиБ). Файлы сохраняются в `UPLOAD_DIR` и отдаются по URL `/media/images/<uuid>.<ext>`. Имена файлов — случайные UUID, поэтому URL работает как непубликуемая ссылка; SVG и другие форматы отклоняются. Неподдерживаемый формат возвращает `415`, превышение размера — `413`, пустой файл — `400`.
+
+Поле `message_type` в объекте сообщения принимает значения `text` или `image`; для изображения заполнены `image_url`, `image_mime_type`, `image_size_bytes`, а `content` содержит подпись (пустую строку, если подписи нет).
 
 ### WebSocket
 
@@ -85,7 +90,7 @@ tests/                   # pytest: REST + WebSocket (TestClient и реальн�
 Сервер → клиент:
 
 ```json
-{ "type": "new_message", "data": { "id": "uuid", "chat_id": "uuid", "sender_id": "uuid", "content": "...", "client_message_id": null, "created_at": "...", "is_read": false } }
+{ "type": "new_message", "data": { "id": "uuid", "chat_id": "uuid", "sender_id": "uuid", "content": "...", "message_type": "text", "image_url": null, "image_mime_type": null, "image_size_bytes": null, "client_message_id": null, "created_at": "...", "is_read": false } }
 { "type": "user_status", "data": { "user_id": "uuid", "status": "online" } }
 { "type": "typing", "data": { "chat_id": "uuid", "user_id": "uuid", "is_typing": true } }
 { "type": "pong" }
@@ -100,9 +105,10 @@ tests/                   # pytest: REST + WebSocket (TestClient и реальн�
 
 - `users`: `id` UUID PK, `username` VARCHAR(32) UNIQUE, `password_hash` VARCHAR(255), `display_name` VARCHAR(64), `avatar_url` TEXT, `created_at` TIMESTAMPTZ, `last_seen` TIMESTAMPTZ
 - `chats`: `id` UUID PK, `user1_id` UUID FK, `user2_id` UUID FK, `created_at` TIMESTAMPTZ, `CHECK (user1_id < user2_id)`, `UNIQUE(user1_id, user2_id)`
-- `messages`: `id` UUID PK, `chat_id` UUID FK (INDEX), `sender_id` UUID FK, `content` TEXT, `client_message_id` UUID, `created_at` TIMESTAMPTZ (INDEX), `is_read` BOOLEAN
+- `messages`: `id` UUID PK, `chat_id` UUID FK (INDEX), `sender_id` UUID FK, `content` TEXT, `client_message_id` UUID, `created_at` TIMESTAMPTZ (INDEX), `is_read` BOOLEAN, `message_type` VARCHAR(16) (`text`/`image`), `image_url` TEXT, `image_mime_type` VARCHAR(64), `image_size_bytes` INTEGER
 - Индекс `idx_messages_chat_created` на `(chat_id, created_at DESC)`
 - Дедупликация: `UNIQUE(chat_id, sender_id, client_message_id)`
+- Ограничения: `message_type IN ('text', 'image')`, для `image` обязателен `image_url`
 
 ## Запуск (dev)
 
@@ -134,6 +140,7 @@ docker compose up --build
 
 - API: http://localhost:8000, Swagger UI: http://localhost:8000/docs
 - PostgreSQL доступен только внутри сети compose (сервис `db`, база `xam`); данные хранятся в volume `postgres_data`
+- Загруженные изображения хранятся в volume `uploads_data` (в контейнере — `/app/uploads`)
 - Переменные `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `API_PORT` можно переопределить в `.env`
 - `DATABASE_URL` для контейнера собирается автоматически и указывает на `db:5432`, значение из локального `.env` игнорируется
 - Остановить: `docker compose down`, удалить данные БД: `docker compose down -v`
@@ -155,6 +162,9 @@ docker run --rm -p 8000:8000 --env-file .env -e DATABASE_URL=postgresql+asyncpg:
 | `DATABASE_URL` | DSN SQLAlchemy async | PostgreSQL localhost/xam |
 | `DATABASE_ECHO` | Логировать SQL | `false` |
 | `AUTO_CREATE_TABLES` | Создавать таблицы при старте | `false` |
+| `UPLOAD_DIR` | Каталог хранения изображений | `uploads` |
+| `MEDIA_URL_PREFIX` | URL-префикс раздачи изображений | `/media` |
+| `MAX_IMAGE_SIZE_BYTES` | Максимальный размер изображения, байт | `5242880` (5 МиБ) |
 | `CORS_ORIGINS` | Разрешённые origin через запятую | `http://localhost:5173` |
 
 ## Тесты и линт

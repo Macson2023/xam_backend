@@ -27,12 +27,21 @@ class MessageRepository:
         sender_id: UUID,
         content: str,
         client_message_id: UUID | None,
+        *,
+        message_type: str = "text",
+        image_url: str | None = None,
+        image_mime_type: str | None = None,
+        image_size_bytes: int | None = None,
     ) -> Message:
         message = Message(
             chat_id=chat_id,
             sender_id=sender_id,
             content=content,
             client_message_id=client_message_id,
+            message_type=message_type,
+            image_url=image_url,
+            image_mime_type=image_mime_type,
+            image_size_bytes=image_size_bytes,
         )
         self.session.add(message)
         await self.session.flush()
