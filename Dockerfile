@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN chown -R app:app /app && chmod +x docker-entrypoint.sh
+RUN mkdir -p uploads && chown -R app:app /app && chmod +x docker-entrypoint.sh
 USER app
 
 EXPOSE 8000

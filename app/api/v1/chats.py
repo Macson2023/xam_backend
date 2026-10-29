@@ -1,7 +1,8 @@
 from datetime import datetime
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
@@ -51,6 +52,30 @@ async def list_chats(
 ) -> list[ChatPublic]:
     overviews = await ChatService(session).list_overviews(current_user)
     return [to_chat_public(overview) for overview in overviews]
+
+
+@router.post(
+    "/{chat_id}/images",
+    response_model=MessagePublic,
+    status_code=status.HTTP_201_CREATED,
+)
+async def send_image(
+    chat_id: UUID,
+    file: Annotated[UploadFile, File(description="Image file")],
+    caption: Annotated[str | None, Form(max_length=4000)] = None,
+    client_message_id: Annotated[UUID | None, Form()] = None,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> MessagePublic:
+    message, chat = await MessageService(session).send_image(
+        current_user,
+        chat_id,
+        file,
+        caption=caption,
+        client_message_id=client_message_id,
+    )
+    await manager.broadcast(chat.participant_ids(), new_message_event(message))
+    return MessagePublic.model_validate(message)
 
 
 @router.post(

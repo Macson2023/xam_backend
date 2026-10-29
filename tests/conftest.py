@@ -1,5 +1,6 @@
 import asyncio
 import os
+import shutil
 import tempfile
 from pathlib import Path
 from uuid import uuid4
@@ -7,13 +8,17 @@ from uuid import uuid4
 import pytest
 
 DB_PATH = Path(tempfile.gettempdir()) / "xam_backend_test.db"
+UPLOAD_DIR = Path(tempfile.gettempdir()) / "xam_backend_test_uploads"
 if DB_PATH.exists():
     DB_PATH.unlink()
+if UPLOAD_DIR.exists():
+    shutil.rmtree(UPLOAD_DIR)
 
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{DB_PATH.as_posix()}"
 os.environ["SECRET_KEY"] = "test-secret-key-with-at-least-32-bytes"
 os.environ["ACCESS_TOKEN_EXPIRE_MINUTES"] = "60"
 os.environ["AUTO_CREATE_TABLES"] = "false"
+os.environ["UPLOAD_DIR"] = str(UPLOAD_DIR)
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -34,6 +39,7 @@ async def _reset_database() -> None:
 @pytest.fixture()
 def client():
     asyncio.run(_reset_database())
+    shutil.rmtree(UPLOAD_DIR, ignore_errors=True)
     manager._connections.clear()
     with TestClient(app) as test_client:
         yield test_client

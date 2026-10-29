@@ -1,7 +1,10 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+MessageType = Literal["text", "image"]
 
 
 class MessageCreate(BaseModel):
@@ -24,9 +27,18 @@ class MessagePublic(BaseModel):
     chat_id: UUID
     sender_id: UUID
     content: str
+    message_type: MessageType = "text"
+    image_url: str | None = None
+    image_mime_type: str | None = None
+    image_size_bytes: int | None = None
     client_message_id: UUID | None = None
     created_at: datetime
     is_read: bool
+
+    @field_validator("message_type", mode="before")
+    @classmethod
+    def default_message_type(cls, value: object) -> object:
+        return value or "text"
 
 
 class MessagePage(BaseModel):

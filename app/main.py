@@ -1,10 +1,12 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import models  # noqa: F401  (register ORM models in metadata)
@@ -49,6 +51,10 @@ app.add_exception_handler(RequestValidationError, validation_error_handler)
 
 app.include_router(api_router, prefix=settings.api_v1_prefix)
 app.include_router(realtime.router)
+
+media_directory = Path(settings.upload_dir)
+media_directory.mkdir(parents=True, exist_ok=True)
+app.mount(settings.media_url_prefix, StaticFiles(directory=media_directory), name="media")
 
 
 @app.get("/health", tags=["system"])
