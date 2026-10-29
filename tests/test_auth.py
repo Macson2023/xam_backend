@@ -1,6 +1,21 @@
+from datetime import UTC, datetime, timedelta
+from uuid import uuid4
+
+import jwt
 from fastapi.testclient import TestClient
 
+from app.core.config import settings
 from tests.conftest import DEFAULT_PASSWORD, auth_headers, register
+
+
+def signed_token(**claims: object) -> str:
+    payload: dict[str, object] = {
+        "sub": str(uuid4()),
+        "type": "access",
+        "exp": datetime.now(UTC) + timedelta(minutes=5),
+    }
+    payload.update(claims)
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algorithm)
 
 
 def test_register_returns_token_and_user(client: TestClient) -> None:
@@ -73,3 +88,73 @@ def test_search_users_excludes_current_user(client: TestClient) -> None:
     assert response.status_code == 200
     usernames = [item["username"] for item in response.json()]
     assert usernames == ["alicia"]
+
+
+def test_register_rejects_blank_display_name(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"username": "alice", "password": DEFAULT_PASSWORD, "display_name": "   "},
+    )
+
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], str)
+
+
+def test_register_rejects_password_longer_than_bcrypt_limit(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"username": "alice", "password": "я" * 40, "display_name": "Alice"},
+    )
+
+    assert response.status_code == 422
+    assert response.json() == {"detail": "Password is too long"}
+
+
+def test_register_rejects_too_long_password_at_schema_level(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/auth/register",
+        json={"username": "alice", "password": "a" * 73, "display_name": "Alice"},
+    )
+
+    assert response.status_code == 422
+    assert isinstance(response.json()["detail"], str)
+
+
+def test_login_with_unknown_user_returns_401(client: TestClient) -> None:
+    response = client.post(
+        "/api/v1/auth/login", json={"username": "nobody", "password": DEFAULT_PASSWORD}
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Invalid username or password"}
+
+
+def test_protected_endpoint_rejects_non_bearer_scheme(client: TestClient) -> None:
+    response = client.get("/api/v1/users/me", headers={"Authorization": "Basic abc"})
+
+    assert response.status_code == 401
+    assert response.json() == {"detail": "Not authenticated"}
+
+
+def test_protected_endpoint_rejects_token_for_unknown_user(client: TestClient) -> None:
+    response = client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {signed_token()}"})
+
+    assert response.status_code == 401
+
+
+def test_protected_endpoint_rejects_expired_token(client: TestClient) -> None:
+    user = register(client, username="alice")
+    token = signed_token(sub=user["user"]["id"], exp=datetime.now(UTC) - timedelta(seconds=1))
+
+    response = client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
+
+
+def test_protected_endpoint_rejects_non_access_token(client: TestClient) -> None:
+    user = register(client, username="alice")
+    token = signed_token(sub=user["user"]["id"], type="refresh")
+
+    response = client.get("/api/v1/users/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 401
