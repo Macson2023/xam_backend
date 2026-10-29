@@ -1,0 +1,24 @@
+.git
+.gitignore
+.gitattributes
+.idea
+.vscode
+.venv
+venv
+env
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+tests
+.env
+.env.*
+!.env.example
+*.log
+db.sqlite3
+Dockerfile
+docker-compose.yml
+README.md
+tz_ backend.md

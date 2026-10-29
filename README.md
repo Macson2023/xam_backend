@@ -121,6 +121,30 @@ uvicorn main:app --reload
 
 Swagger UI: http://localhost:8000/docs, проверка живости: http://localhost:8000/health.
 
+## Запуск в Docker
+
+`Dockerfile` собирает образ на `python:3.12-slim` и запускает `uvicorn` от непривилегированного пользователя. `docker-entrypoint.sh` перед стартом применяет миграции (`alembic upgrade head`); отключить это можно переменной `RUN_MIGRATIONS=false`.
+
+`docker-compose.yml` поднимает приложение вместе с PostgreSQL 16:
+
+```bash
+copy .env.example .env   # при необходимости задайте SECRET_KEY и CORS_ORIGINS
+docker compose up --build
+```
+
+- API: http://localhost:8000, Swagger UI: http://localhost:8000/docs
+- PostgreSQL доступен только внутри сети compose (сервис `db`, база `xam`); данные хранятся в volume `postgres_data`
+- Переменные `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `API_PORT` можно переопределить в `.env`
+- `DATABASE_URL` для контейнера собирается автоматически и указывает на `db:5432`, значение из локального `.env` игнорируется
+- Остановить: `docker compose down`, удалить данные БД: `docker compose down -v`
+
+Собрать и запустить только приложение (без compose), если PostgreSQL уже доступен:
+
+```bash
+docker build -t xam_backend .
+docker run --rm -p 8000:8000 --env-file .env -e DATABASE_URL=postgresql+asyncpg://postgres:postgres@host.docker.internal:5432/xam xam_backend
+```
+
 ### Переменные окружения
 
 | Переменная | Назначение | По умолчанию |
