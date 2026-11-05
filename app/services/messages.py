@@ -5,9 +5,11 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.base import utcnow
 from app.models.chat import Chat
 from app.models.message import MESSAGE_TYPE_IMAGE, Message
 from app.models.user import User
+from app.repositories.chat_members import ChatMemberRepository
 from app.repositories.chats import ChatRepository
 from app.repositories.messages import MessageRepository
 from app.schemas.message import MessageCreate
@@ -20,12 +22,21 @@ class MessageService:
         self.session = session
         self.messages = MessageRepository(session)
         self.chats = ChatRepository(session)
+        self.members = ChatMemberRepository(session)
         self.chat_service = ChatService(session)
 
     async def send(
-        self, current_user: User, chat_id: UUID, payload: MessageCreate
+        self,
+        current_user: User,
+        chat_id: UUID,
+        payload: MessageCreate,
+        *,
+        expected_type: str | None = None,
     ) -> tuple[Message, Chat]:
-        chat = await self.chat_service.get_participant_chat(current_user, chat_id)
+        chat, membership = await self.chat_service.get_member_chat(
+            current_user, chat_id, expected_type=expected_type
+        )
+        self.chat_service.ensure_can_post(chat, membership)
 
         if payload.client_message_id is not None:
             existing = await self.messages.get_by_client_id(
@@ -68,8 +79,13 @@ class MessageService:
         upload: UploadFile,
         caption: str | None,
         client_message_id: UUID | None,
+        *,
+        expected_type: str | None = None,
     ) -> tuple[Message, Chat]:
-        chat = await self.chat_service.get_participant_chat(current_user, chat_id)
+        chat, membership = await self.chat_service.get_member_chat(
+            current_user, chat_id, expected_type=expected_type
+        )
+        self.chat_service.ensure_can_post(chat, membership)
         content = normalize_caption(caption)
 
         if client_message_id is not None:
@@ -123,12 +139,29 @@ class MessageService:
         chat_id: UUID,
         limit: int,
         before: datetime | None,
+        *,
+        expected_type: str | None = None,
     ) -> list[Message]:
-        await self.chat_service.get_participant_chat(current_user, chat_id)
+        await self.chat_service.get_participant_chat(
+            current_user, chat_id, expected_type=expected_type
+        )
         return await self.messages.history(chat_id, limit=limit, before=before)
 
-    async def mark_read(self, current_user: User, chat_id: UUID) -> int:
-        await self.chat_service.get_participant_chat(current_user, chat_id)
-        updated = await self.messages.mark_read(chat_id, current_user.id)
+    async def mark_read(
+        self,
+        current_user: User,
+        chat_id: UUID,
+        *,
+        expected_type: str | None = None,
+    ) -> int:
+        chat, membership = await self.chat_service.get_member_chat(
+            current_user, chat_id, expected_type=expected_type
+        )
+        if chat.is_direct():
+            updated = await self.messages.mark_read(chat.id, current_user.id)
+        else:
+            read_at = membership.last_read_at if membership else None
+            updated = await self.chats.count_unread_since(chat.id, current_user.id, read_at)
+            await self.members.mark_read(chat.id, current_user.id, utcnow())
         await self.session.commit()
         return updated

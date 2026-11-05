@@ -20,7 +20,7 @@
 ```
 app/
   api/deps.py            # JWT-аутентификация, зависимости
-  api/v1/                # auth, users, chats, realtime (WebSocket)
+  api/v1/                # auth, users, chats, groups, channels, realtime (WebSocket)
   core/                  # конфигурация, безопасность, обработчики ошибок
   db/                    # Base, async-движок, фабрика сессий
   models/                # users, chats, messages
@@ -68,6 +68,47 @@ tests/                   # pytest: REST + WebSocket (TestClient и реальн�
 
 В БД диалог хранится с `user1_id < user2_id` и ограничением `UNIQUE(user1_id, user2_id)`, поэтому повторный вызов для той же пары (в любом порядке) возвращает существующий чат.
 
+### Группы
+
+| Метод | Путь | Описание |
+| --- | --- | --- |
+| POST | `/api/v1/groups` | Создать группу: `{ "title": "...", "description": "...", "member_ids": ["uuid"] }`. Создатель становится `owner`, возвращается `201` |
+| GET | `/api/v1/groups` | Список групп пользователя с последним сообщением и `unread_count` |
+| GET | `/api/v1/groups/{group_id}` | Группа с участниками (`members`) и ролями |
+| PATCH | `/api/v1/groups/{group_id}` | Изменить `title`, `description`, `avatar_url` (owner/admin) |
+| DELETE | `/api/v1/groups/{group_id}` | Удалить группу (только owner) |
+| GET | `/api/v1/groups/{group_id}/members` | Участники группы |
+| POST | `/api/v1/groups/{group_id}/members` | Добавить участников: `{ "user_ids": ["uuid"], "role": "member"\|"admin" }`. Роль `admin` может выдавать только owner |
+| PATCH | `/api/v1/groups/{group_id}/members/{user_id}` | Изменить роль участника на `admin`/`member` (только owner) |
+| DELETE | `/api/v1/groups/{group_id}/members/{user_id}` | Удалить участника (owner/admin) или выйти самому |
+| POST | `/api/v1/groups/{group_id}/leave` | Выйти из группы; owner должен удалить группу |
+| POST | `/api/v1/groups/{group_id}/messages` | Отправить сообщение в группу (участники) |
+| GET | `/api/v1/groups/{group_id}/messages` | История сообщений группы |
+| POST | `/api/v1/groups/{group_id}/images` | Отправить изображение в группу |
+| POST | `/api/v1/groups/{group_id}/read` | Отметить сообщения группы прочитанными |
+
+### Каналы
+
+| Метод | Путь | Описание |
+| --- | --- | --- |
+| POST | `/api/v1/channels` | Создать канал: `{ "title": "...", "description": "...", "is_public": true, "member_ids": ["uuid"] }`. Создатель становится `owner` |
+| GET | `/api/v1/channels` | Список каналов, на которые подписан пользователь |
+| GET | `/api/v1/channels/{channel_id}` | Канал с участниками; публичный канал доступен без подписки |
+| PATCH | `/api/v1/channels/{channel_id}` | Изменить `title`, `description`, `avatar_url`, `is_public` (owner/admin) |
+| DELETE | `/api/v1/channels/{channel_id}` | Удалить канал (только owner) |
+| POST | `/api/v1/channels/{channel_id}/subscribe` | Подписаться на публичный канал (идемпотентно) |
+| POST | `/api/v1/channels/{channel_id}/unsubscribe` | Отписаться; owner не может отписаться |
+| GET | `/api/v1/channels/{channel_id}/members` | Подписчики канала |
+| POST | `/api/v1/channels/{channel_id}/members` | Добавить подписчиков/админов (owner/admin) |
+| PATCH | `/api/v1/channels/{channel_id}/members/{user_id}` | Изменить роль на `admin`/`member` (только owner) |
+| DELETE | `/api/v1/channels/{channel_id}/members/{user_id}` | Удалить подписчика (owner/admin) |
+| POST | `/api/v1/channels/{channel_id}/messages` | Опубликовать сообщение (только owner/admin) |
+| GET | `/api/v1/channels/{channel_id}/messages` | История канала (подписчики) |
+| POST | `/api/v1/channels/{channel_id}/images` | Опубликовать изображение (только owner/admin) |
+| POST | `/api/v1/channels/{channel_id}/read` | Отметить сообщения канала прочитанными |
+
+Группы и каналы используют общую таблицу `chats` (`chat_type = "group"|"channel"`), поэтому отправка и история также доступны через общие маршруты `/api/v1/chats/{chat_id}/messages|images|read`. У групп писать может любой участник, у каналов — только `owner`/`admin`. События `new_message` рассылаются всем участникам группы/канала.
+
 ### Сообщения
 
 | Метод | Путь | Описание |
@@ -77,7 +118,7 @@ tests/                   # pytest: REST + WebSocket (TestClient и реальн�
 | GET | `/api/v1/chats/{chat_id}/messages?limit=50&before=` | История, cursor-based пагинация по `created_at` (новые сначала); `next_cursor` в ответе |
 | POST | `/api/v1/chats/{chat_id}/read` | Пометить входящие сообщения чата прочитанными |
 
-После сохранения сообщения (текстового или изображения) событие `new_message` рассылается всем активным сессиям обоих участников.
+После сохранения сообщения (текстового или изображения) событие `new_message` рассылается всем активным сессиям участников: обоим собеседникам в личном диалоге или всем участникам группы/канала.
 
 Изображения принимаются в форматах JPEG, PNG, GIF и WEBP; тип определяется по содержимому файла, а не по заголовку `Content-Type`. Максимальный размер задаётся `MAX_IMAGE_SIZE_BYTES` (по умолчанию 5 МиБ). Файлы сохраняются в `UPLOAD_DIR` и отдаются по URL `/media/images/<uuid>.<ext>`. Имена файлов — случайные UUID, поэтому URL работает как непубликуемая ссылка; SVG и другие форматы отклоняются. Неподдерживаемый формат возвращает `415`, превышение размера — `413`, пустой файл — `400`.
 
@@ -104,7 +145,8 @@ tests/                   # pytest: REST + WebSocket (TestClient и реальн�
 ## Схема БД
 
 - `users`: `id` UUID PK, `username` VARCHAR(32) UNIQUE, `password_hash` VARCHAR(255), `display_name` VARCHAR(64), `avatar_url` TEXT, `created_at` TIMESTAMPTZ, `last_seen` TIMESTAMPTZ
-- `chats`: `id` UUID PK, `user1_id` UUID FK, `user2_id` UUID FK, `created_at` TIMESTAMPTZ, `CHECK (user1_id < user2_id)`, `UNIQUE(user1_id, user2_id)`
+- `chats`: `id` UUID PK, `chat_type` VARCHAR(16) (`direct`/`group`/`channel`), `user1_id` UUID FK NULL, `user2_id` UUID FK NULL, `owner_id` UUID FK NULL, `title` VARCHAR(128) NULL, `description` TEXT NULL, `avatar_url` TEXT NULL, `is_public` BOOLEAN, `created_at` TIMESTAMPTZ. Для `direct` заполнены `user1_id < user2_id` и `owner_id IS NULL`; для группы/канала — `owner_id` и `title`, а `user1_id`/`user2_id` пусты. Ограничения: `CHECK (user1_id < user2_id)`, `UNIQUE(user1_id, user2_id)`, `CHECK (chat_type IN ('direct','group','channel'))`
+- `chat_members`: `chat_id` UUID FK + `user_id` UUID FK (составной PK), `role` VARCHAR(16) (`owner`/`admin`/`member`), `joined_at` TIMESTAMPTZ, `last_read_at` TIMESTAMPTZ NULL. Используется для групп и каналов; `last_read_at` хранит позицию прочтения для расчёта непрочитанных
 - `messages`: `id` UUID PK, `chat_id` UUID FK (INDEX), `sender_id` UUID FK, `content` TEXT, `client_message_id` UUID, `created_at` TIMESTAMPTZ (INDEX), `is_read` BOOLEAN, `message_type` VARCHAR(16) (`text`/`image`), `image_url` TEXT, `image_mime_type` VARCHAR(64), `image_size_bytes` INTEGER
 - Индекс `idx_messages_chat_created` на `(chat_id, created_at DESC)`
 - Дедупликация: `UNIQUE(chat_id, sender_id, client_message_id)`

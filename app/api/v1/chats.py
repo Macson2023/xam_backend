@@ -19,10 +19,21 @@ router = APIRouter(prefix="/chats", tags=["chats"])
 
 
 def to_chat_public(overview: ChatOverview) -> ChatPublic:
+    chat = overview.chat
     return ChatPublic(
-        id=overview.chat.id,
-        partner=UserPublic.model_validate(overview.partner),
-        created_at=overview.chat.created_at,
+        id=chat.id,
+        type=chat.chat_type,
+        partner=(
+            UserPublic.model_validate(overview.partner) if overview.partner is not None else None
+        ),
+        title=chat.title,
+        description=chat.description,
+        avatar_url=chat.avatar_url,
+        owner_id=chat.owner_id,
+        is_public=chat.is_public,
+        member_count=overview.member_count,
+        my_role=overview.my_role,
+        created_at=chat.created_at,
         last_activity=overview.last_activity,
         unread_count=overview.unread_count,
         last_message=(
@@ -74,7 +85,8 @@ async def send_image(
         caption=caption,
         client_message_id=client_message_id,
     )
-    await manager.broadcast(chat.participant_ids(), new_message_event(message))
+    recipients = await ChatService(session).recipient_ids(chat)
+    await manager.broadcast(recipients, new_message_event(message))
     return MessagePublic.model_validate(message)
 
 
@@ -90,7 +102,8 @@ async def send_message(
     session: AsyncSession = Depends(get_db),
 ) -> MessagePublic:
     message, chat = await MessageService(session).send(current_user, chat_id, payload)
-    await manager.broadcast(chat.participant_ids(), new_message_event(message))
+    recipients = await ChatService(session).recipient_ids(chat)
+    await manager.broadcast(recipients, new_message_event(message))
     return MessagePublic.model_validate(message)
 
 

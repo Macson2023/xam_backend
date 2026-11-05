@@ -3,12 +3,13 @@ import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect, status
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from app.core.security import InvalidTokenError, decode_access_token
 from app.db.base import utcnow
 from app.db.session import async_session_factory
 from app.models.chat import Chat
+from app.models.chat_member import ChatMember
 from app.models.user import User
 from app.realtime import manager, typing_event, user_status_event
 from app.repositories.chats import ChatRepository
@@ -28,12 +29,25 @@ async def _partner_ids(user_id: UUID) -> set[UUID]:
         return await ChatRepository(session).partner_ids_for_user(user_id)
 
 
-async def _chat_partner_id(user_id: UUID, chat_id: UUID) -> UUID | None:
+async def _typing_recipients(user_id: UUID, chat_id: UUID) -> set[UUID] | None:
     async with async_session_factory() as session:
         chat = await session.get(Chat, chat_id)
-        if chat is None or user_id not in chat.participant_ids():
+        if chat is None:
             return None
-        return chat.partner_id(user_id)
+        if chat.is_direct():
+            if user_id not in chat.participant_ids():
+                return None
+            partner_id = chat.partner_id(user_id)
+            return {partner_id} if partner_id is not None else None
+
+        membership = await session.get(ChatMember, (chat_id, user_id))
+        if membership is None:
+            return None
+        stmt = select(ChatMember.user_id).where(
+            ChatMember.chat_id == chat_id,
+            ChatMember.user_id != user_id,
+        )
+        return set(await session.scalars(stmt))
 
 
 async def _touch_last_seen(user_id: UUID) -> None:
@@ -75,13 +89,13 @@ async def _handle_client_event(websocket: WebSocket, user_id: UUID, raw: str) ->
             await _send_error(websocket, "Invalid chat_id")
             return
 
-        partner_id = await _chat_partner_id(user_id, chat_id)
-        if partner_id is None:
+        recipients = await _typing_recipients(user_id, chat_id)
+        if recipients is None:
             await _send_error(websocket, "Chat not found")
             return
 
         is_typing = bool(data.get("is_typing", True))
-        await manager.send_to_user(partner_id, typing_event(chat_id, user_id, is_typing))
+        await manager.broadcast(recipients, typing_event(chat_id, user_id, is_typing))
         return
 
     await _send_error(websocket, "Unknown event type")

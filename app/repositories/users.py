@@ -16,6 +16,12 @@ class UserRepository:
     async def get_by_username(self, username: str) -> User | None:
         return await self.session.scalar(select(User).where(User.username == username))
 
+    async def get_by_ids(self, user_ids: set[UUID]) -> dict[UUID, User]:
+        if not user_ids:
+            return {}
+        users = await self.session.scalars(select(User).where(User.id.in_(user_ids)))
+        return {user.id: user for user in users}
+
     async def create(self, username: str, password_hash: str, display_name: str) -> User:
         user = User(username=username, password_hash=password_hash, display_name=display_name)
         self.session.add(user)
