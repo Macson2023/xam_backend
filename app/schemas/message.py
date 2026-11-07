@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-MessageType = Literal["text", "image"]
+MessageType = Literal["text", "image", "audio", "video_note"]
 
 
 class MessageCreate(BaseModel):
@@ -31,6 +31,10 @@ class MessagePublic(BaseModel):
     image_url: str | None = None
     image_mime_type: str | None = None
     image_size_bytes: int | None = None
+    media_url: str | None = None
+    media_mime_type: str | None = None
+    media_size_bytes: int | None = None
+    media_duration_seconds: int | None = None
     client_message_id: UUID | None = None
     created_at: datetime
     is_read: bool

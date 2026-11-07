@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     upload_dir: str = "uploads"
     media_url_prefix: str = "/media"
     max_image_size_bytes: int = 5 * 1024 * 1024
+    max_audio_size_bytes: int = 25 * 1024 * 1024
+    max_video_note_size_bytes: int = 25 * 1024 * 1024
 
     cors_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173"]

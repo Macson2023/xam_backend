@@ -32,6 +32,10 @@ class MessageRepository:
         image_url: str | None = None,
         image_mime_type: str | None = None,
         image_size_bytes: int | None = None,
+        media_url: str | None = None,
+        media_mime_type: str | None = None,
+        media_size_bytes: int | None = None,
+        media_duration_seconds: int | None = None,
     ) -> Message:
         message = Message(
             chat_id=chat_id,
@@ -42,6 +46,10 @@ class MessageRepository:
             image_url=image_url,
             image_mime_type=image_mime_type,
             image_size_bytes=image_size_bytes,
+            media_url=media_url,
+            media_mime_type=media_mime_type,
+            media_size_bytes=media_size_bytes,
+            media_duration_seconds=media_duration_seconds,
         )
         self.session.add(message)
         await self.session.flush()

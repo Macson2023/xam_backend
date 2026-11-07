@@ -21,6 +21,8 @@ from app.db.base import Base, utcnow
 
 MESSAGE_TYPE_TEXT = "text"
 MESSAGE_TYPE_IMAGE = "image"
+MESSAGE_TYPE_AUDIO = "audio"
+MESSAGE_TYPE_VIDEO_NOTE = "video_note"
 
 
 class Message(Base):
@@ -29,10 +31,17 @@ class Message(Base):
         UniqueConstraint(
             "chat_id", "sender_id", "client_message_id", name="uq_messages_client_message_id"
         ),
-        CheckConstraint("message_type IN ('text', 'image')", name="ck_messages_type"),
+        CheckConstraint(
+            "message_type IN ('text', 'image', 'audio', 'video_note')",
+            name="ck_messages_type",
+        ),
         CheckConstraint(
             "message_type != 'image' OR image_url IS NOT NULL",
             name="ck_messages_image_requires_url",
+        ),
+        CheckConstraint(
+            "message_type NOT IN ('audio', 'video_note') OR media_url IS NOT NULL",
+            name="ck_messages_media_requires_url",
         ),
         Index("idx_messages_chat_created", "chat_id", text("created_at DESC")),
         Index("ix_messages_chat_id", "chat_id"),
@@ -60,3 +69,7 @@ class Message(Base):
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     image_mime_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     image_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    media_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    media_mime_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    media_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    media_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)

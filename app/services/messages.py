@@ -7,7 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import utcnow
 from app.models.chat import Chat
-from app.models.message import MESSAGE_TYPE_IMAGE, Message
+from app.models.message import (
+    MESSAGE_TYPE_AUDIO,
+    MESSAGE_TYPE_IMAGE,
+    MESSAGE_TYPE_VIDEO_NOTE,
+    Message,
+)
 from app.models.user import User
 from app.repositories.chat_members import ChatMemberRepository
 from app.repositories.chats import ChatRepository
@@ -15,6 +20,7 @@ from app.repositories.messages import MessageRepository
 from app.schemas.message import MessageCreate
 from app.services.chats import ChatService
 from app.services.images import ImageStorage, normalize_caption
+from app.services.media import AudioStorage, VideoNoteStorage, normalize_duration
 
 
 class MessageService:
@@ -109,6 +115,111 @@ class MessageService:
                 image_url=stored.url,
                 image_mime_type=stored.mime_type,
                 image_size_bytes=stored.size_bytes,
+            )
+            await self.session.commit()
+        except IntegrityError as exc:
+            await self.session.rollback()
+            await storage.delete(stored)
+            if client_message_id is not None:
+                existing = await self.messages.get_by_client_id(
+                    chat_id=chat.id,
+                    sender_id=current_user.id,
+                    client_message_id=client_message_id,
+                )
+                if existing is not None:
+                    return existing, chat
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail="Message could not be saved"
+            ) from exc
+        except Exception:
+            await self.session.rollback()
+            await storage.delete(stored)
+            raise
+
+        await self.session.refresh(message)
+        return message, chat
+
+    async def send_audio(
+        self,
+        current_user: User,
+        chat_id: UUID,
+        upload: UploadFile,
+        duration_seconds: float | None,
+        client_message_id: UUID | None,
+        *,
+        expected_type: str | None = None,
+    ) -> tuple[Message, Chat]:
+        return await self._send_media(
+            current_user,
+            chat_id,
+            upload,
+            AudioStorage(),
+            message_type=MESSAGE_TYPE_AUDIO,
+            duration_seconds=duration_seconds,
+            client_message_id=client_message_id,
+            expected_type=expected_type,
+        )
+
+    async def send_video_note(
+        self,
+        current_user: User,
+        chat_id: UUID,
+        upload: UploadFile,
+        duration_seconds: float | None,
+        client_message_id: UUID | None,
+        *,
+        expected_type: str | None = None,
+    ) -> tuple[Message, Chat]:
+        return await self._send_media(
+            current_user,
+            chat_id,
+            upload,
+            VideoNoteStorage(),
+            message_type=MESSAGE_TYPE_VIDEO_NOTE,
+            duration_seconds=duration_seconds,
+            client_message_id=client_message_id,
+            expected_type=expected_type,
+        )
+
+    async def _send_media(
+        self,
+        current_user: User,
+        chat_id: UUID,
+        upload: UploadFile,
+        storage: AudioStorage | VideoNoteStorage,
+        *,
+        message_type: str,
+        duration_seconds: float | None,
+        client_message_id: UUID | None,
+        expected_type: str | None,
+    ) -> tuple[Message, Chat]:
+        chat, membership = await self.chat_service.get_member_chat(
+            current_user, chat_id, expected_type=expected_type
+        )
+        self.chat_service.ensure_can_post(chat, membership)
+        duration = normalize_duration(duration_seconds)
+
+        if client_message_id is not None:
+            existing = await self.messages.get_by_client_id(
+                chat_id=chat.id,
+                sender_id=current_user.id,
+                client_message_id=client_message_id,
+            )
+            if existing is not None:
+                return existing, chat
+
+        stored = await storage.save(upload)
+        try:
+            message = await self.messages.create(
+                chat_id=chat.id,
+                sender_id=current_user.id,
+                content="",
+                client_message_id=client_message_id,
+                message_type=message_type,
+                media_url=stored.url,
+                media_mime_type=stored.mime_type,
+                media_size_bytes=stored.size_bytes,
+                media_duration_seconds=duration,
             )
             await self.session.commit()
         except IntegrityError as exc:

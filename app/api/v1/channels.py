@@ -212,6 +212,58 @@ async def send_channel_image(
     return MessagePublic.model_validate(message)
 
 
+@router.post(
+    "/{channel_id}/audio",
+    response_model=MessagePublic,
+    status_code=status.HTTP_201_CREATED,
+)
+async def send_channel_audio(
+    channel_id: UUID,
+    file: Annotated[UploadFile, File(description="Audio file")],
+    duration_seconds: Annotated[float | None, Form()] = None,
+    client_message_id: Annotated[UUID | None, Form()] = None,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> MessagePublic:
+    message, chat = await MessageService(session).send_audio(
+        current_user,
+        channel_id,
+        file,
+        duration_seconds=duration_seconds,
+        client_message_id=client_message_id,
+        expected_type=CHAT_TYPE_CHANNEL,
+    )
+    recipients = await ChatService(session).recipient_ids(chat)
+    await manager.broadcast(recipients, new_message_event(message))
+    return MessagePublic.model_validate(message)
+
+
+@router.post(
+    "/{channel_id}/video-notes",
+    response_model=MessagePublic,
+    status_code=status.HTTP_201_CREATED,
+)
+async def send_channel_video_note(
+    channel_id: UUID,
+    file: Annotated[UploadFile, File(description="Video note file")],
+    duration_seconds: Annotated[float | None, Form()] = None,
+    client_message_id: Annotated[UUID | None, Form()] = None,
+    current_user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_db),
+) -> MessagePublic:
+    message, chat = await MessageService(session).send_video_note(
+        current_user,
+        channel_id,
+        file,
+        duration_seconds=duration_seconds,
+        client_message_id=client_message_id,
+        expected_type=CHAT_TYPE_CHANNEL,
+    )
+    recipients = await ChatService(session).recipient_ids(chat)
+    await manager.broadcast(recipients, new_message_event(message))
+    return MessagePublic.model_validate(message)
+
+
 @router.get("/{channel_id}/messages", response_model=MessagePage)
 async def get_channel_messages(
     channel_id: UUID,

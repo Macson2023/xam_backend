@@ -85,6 +85,8 @@ tests/                   # pytest: REST + WebSocket (TestClient и реальн�
 | POST | `/api/v1/groups/{group_id}/messages` | Отправить сообщение в группу (участники) |
 | GET | `/api/v1/groups/{group_id}/messages` | История сообщений группы |
 | POST | `/api/v1/groups/{group_id}/images` | Отправить изображение в группу |
+| POST | `/api/v1/groups/{group_id}/audio` | Отправить аудиосообщение в группу |
+| POST | `/api/v1/groups/{group_id}/video-notes` | Отправить видеокружок в группу |
 | POST | `/api/v1/groups/{group_id}/read` | Отметить сообщения группы прочитанными |
 
 ### Каналы
@@ -105,9 +107,11 @@ tests/                   # pytest: REST + WebSocket (TestClient и реальн�
 | POST | `/api/v1/channels/{channel_id}/messages` | Опубликовать сообщение (только owner/admin) |
 | GET | `/api/v1/channels/{channel_id}/messages` | История канала (подписчики) |
 | POST | `/api/v1/channels/{channel_id}/images` | Опубликовать изображение (только owner/admin) |
+| POST | `/api/v1/channels/{channel_id}/audio` | Опубликовать аудиосообщение (только owner/admin) |
+| POST | `/api/v1/channels/{channel_id}/video-notes` | Опубликовать видеокружок (только owner/admin) |
 | POST | `/api/v1/channels/{channel_id}/read` | Отметить сообщения канала прочитанными |
 
-Группы и каналы используют общую таблицу `chats` (`chat_type = "group"|"channel"`), поэтому отправка и история также доступны через общие маршруты `/api/v1/chats/{chat_id}/messages|images|read`. У групп писать может любой участник, у каналов — только `owner`/`admin`. События `new_message` рассылаются всем участникам группы/канала.
+Группы и каналы используют общую таблицу `chats` (`chat_type = "group"|"channel"`), поэтому отправка и история также доступны через общие маршруты `/api/v1/chats/{chat_id}/messages|images|audio|video-notes|read`. У групп писать может любой участник, у каналов — только `owner`/`admin`. События `new_message` рассылаются всем участникам группы/канала.
 
 ### Сообщения
 
@@ -115,14 +119,18 @@ tests/                   # pytest: REST + WebSocket (TestClient и реальн�
 | --- | --- | --- |
 | POST | `/api/v1/chats/{chat_id}/messages` | Отправка: `{ "content": "...", "client_message_id": "uuid" }`. `client_message_id` опционален и обеспечивает идемпотентность |
 | POST | `/api/v1/chats/{chat_id}/images` | Отправка изображения: `multipart/form-data` с полем `file`, опциональными `caption` (до 4000 символов) и `client_message_id` |
+| POST | `/api/v1/chats/{chat_id}/audio` | Отправка аудиосообщения: `multipart/form-data` с полем `file`, опциональными `duration_seconds` (1–3600) и `client_message_id` |
+| POST | `/api/v1/chats/{chat_id}/video-notes` | Отправка видеокружка: `multipart/form-data` с полем `file`, опциональными `duration_seconds` (1–3600) и `client_message_id` |
 | GET | `/api/v1/chats/{chat_id}/messages?limit=50&before=` | История, cursor-based пагинация по `created_at` (новые сначала); `next_cursor` в ответе |
 | POST | `/api/v1/chats/{chat_id}/read` | Пометить входящие сообщения чата прочитанными |
 
-После сохранения сообщения (текстового или изображения) событие `new_message` рассылается всем активным сессиям участников: обоим собеседникам в личном диалоге или всем участникам группы/канала.
+После сохранения сообщения (текстового, изображения, аудио или видеокружка) событие `new_message` рассылается всем активным сессиям участников: обоим собеседникам в личном диалоге или всем участникам группы/канала.
 
 Изображения принимаются в форматах JPEG, PNG, GIF и WEBP; тип определяется по содержимому файла, а не по заголовку `Content-Type`. Максимальный размер задаётся `MAX_IMAGE_SIZE_BYTES` (по умолчанию 5 МиБ). Файлы сохраняются в `UPLOAD_DIR` и отдаются по URL `/media/images/<uuid>.<ext>`. Имена файлов — случайные UUID, поэтому URL работает как непубликуемая ссылка; SVG и другие форматы отклоняются. Неподдерживаемый формат возвращает `415`, превышение размера — `413`, пустой файл — `400`.
 
-Поле `message_type` в объекте сообщения принимает значения `text` или `image`; для изображения заполнены `image_url`, `image_mime_type`, `image_size_bytes`, а `content` содержит подпись (пустую строку, если подписи нет).
+Аудиосообщения принимаются в форматах OGG, MP3, WAV, M4A и WEBM (лимит `MAX_AUDIO_SIZE_BYTES`, по умолчанию 25 МиБ), видеокружки — в MP4 и WEBM (лимит `MAX_VIDEO_NOTE_SIZE_BYTES`, по умолчанию 25 МиБ). Формат также определяется по содержимому файла. Файлы сохраняются в `UPLOAD_DIR` и отдаются по URL `/media/audio/<uuid>.<ext>` и `/media/video_notes/<uuid>.<ext>`.
+
+Поле `message_type` в объекте сообщения принимает значения `text`, `image`, `audio` или `video_note`; для изображения заполнены `image_url`, `image_mime_type`, `image_size_bytes`, для аудио и видеокружка — `media_url`, `media_mime_type`, `media_size_bytes`, `media_duration_seconds`, а `content` содержит подпись изображения или пустую строку.
 
 ### WebSocket
 
@@ -131,7 +139,7 @@ tests/                   # pytest: REST + WebSocket (TestClient и реальн�
 Сервер → клиент:
 
 ```json
-{ "type": "new_message", "data": { "id": "uuid", "chat_id": "uuid", "sender_id": "uuid", "content": "...", "message_type": "text", "image_url": null, "image_mime_type": null, "image_size_bytes": null, "client_message_id": null, "created_at": "...", "is_read": false } }
+{ "type": "new_message", "data": { "id": "uuid", "chat_id": "uuid", "sender_id": "uuid", "content": "...", "message_type": "text", "image_url": null, "image_mime_type": null, "image_size_bytes": null, "media_url": null, "media_mime_type": null, "media_size_bytes": null, "media_duration_seconds": null, "client_message_id": null, "created_at": "...", "is_read": false } }
 { "type": "user_status", "data": { "user_id": "uuid", "status": "online" } }
 { "type": "typing", "data": { "chat_id": "uuid", "user_id": "uuid", "is_typing": true } }
 { "type": "pong" }
@@ -147,10 +155,10 @@ tests/                   # pytest: REST + WebSocket (TestClient и реальн�
 - `users`: `id` UUID PK, `username` VARCHAR(32) UNIQUE, `password_hash` VARCHAR(255), `display_name` VARCHAR(64), `avatar_url` TEXT, `created_at` TIMESTAMPTZ, `last_seen` TIMESTAMPTZ
 - `chats`: `id` UUID PK, `chat_type` VARCHAR(16) (`direct`/`group`/`channel`), `user1_id` UUID FK NULL, `user2_id` UUID FK NULL, `owner_id` UUID FK NULL, `title` VARCHAR(128) NULL, `description` TEXT NULL, `avatar_url` TEXT NULL, `is_public` BOOLEAN, `created_at` TIMESTAMPTZ. Для `direct` заполнены `user1_id < user2_id` и `owner_id IS NULL`; для группы/канала — `owner_id` и `title`, а `user1_id`/`user2_id` пусты. Ограничения: `CHECK (user1_id < user2_id)`, `UNIQUE(user1_id, user2_id)`, `CHECK (chat_type IN ('direct','group','channel'))`
 - `chat_members`: `chat_id` UUID FK + `user_id` UUID FK (составной PK), `role` VARCHAR(16) (`owner`/`admin`/`member`), `joined_at` TIMESTAMPTZ, `last_read_at` TIMESTAMPTZ NULL. Используется для групп и каналов; `last_read_at` хранит позицию прочтения для расчёта непрочитанных
-- `messages`: `id` UUID PK, `chat_id` UUID FK (INDEX), `sender_id` UUID FK, `content` TEXT, `client_message_id` UUID, `created_at` TIMESTAMPTZ (INDEX), `is_read` BOOLEAN, `message_type` VARCHAR(16) (`text`/`image`), `image_url` TEXT, `image_mime_type` VARCHAR(64), `image_size_bytes` INTEGER
+- `messages`: `id` UUID PK, `chat_id` UUID FK (INDEX), `sender_id` UUID FK, `content` TEXT, `client_message_id` UUID, `created_at` TIMESTAMPTZ (INDEX), `is_read` BOOLEAN, `message_type` VARCHAR(16) (`text`/`image`/`audio`/`video_note`), `image_url` TEXT, `image_mime_type` VARCHAR(64), `image_size_bytes` INTEGER, `media_url` TEXT, `media_mime_type` VARCHAR(64), `media_size_bytes` INTEGER, `media_duration_seconds` INTEGER
 - Индекс `idx_messages_chat_created` на `(chat_id, created_at DESC)`
 - Дедупликация: `UNIQUE(chat_id, sender_id, client_message_id)`
-- Ограничения: `message_type IN ('text', 'image')`, для `image` обязателен `image_url`
+- Ограничения: `message_type IN ('text', 'image', 'audio', 'video_note')`, для `image` обязателен `image_url`, для `audio`/`video_note` — `media_url`
 
 ## Запуск (dev)
 
@@ -182,7 +190,7 @@ docker compose up --build
 
 - API: http://localhost:8000, Swagger UI: http://localhost:8000/docs
 - PostgreSQL доступен только внутри сети compose (сервис `db`, база `xam`); данные хранятся в volume `postgres_data`
-- Загруженные изображения хранятся в volume `uploads_data` (в контейнере — `/app/uploads`)
+- Загруженные изображения, аудиосообщения и видеокружки хранятся в volume `uploads_data` (в контейнере — `/app/uploads`)
 - Переменные `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `API_PORT` можно переопределить в `.env`
 - `DATABASE_URL` для контейнера собирается автоматически и указывает на `db:5432`, значение из локального `.env` игнорируется
 - Остановить: `docker compose down`, удалить данные БД: `docker compose down -v`
@@ -204,9 +212,11 @@ docker run --rm -p 8000:8000 --env-file .env -e DATABASE_URL=postgresql+asyncpg:
 | `DATABASE_URL` | DSN SQLAlchemy async | PostgreSQL localhost/xam |
 | `DATABASE_ECHO` | Логировать SQL | `false` |
 | `AUTO_CREATE_TABLES` | Создавать таблицы при старте | `false` |
-| `UPLOAD_DIR` | Каталог хранения изображений | `uploads` |
-| `MEDIA_URL_PREFIX` | URL-префикс раздачи изображений | `/media` |
+| `UPLOAD_DIR` | Каталог хранения медиафайлов | `uploads` |
+| `MEDIA_URL_PREFIX` | URL-префикс раздачи медиафайлов | `/media` |
 | `MAX_IMAGE_SIZE_BYTES` | Максимальный размер изображения, байт | `5242880` (5 МиБ) |
+| `MAX_AUDIO_SIZE_BYTES` | Максимальный размер аудиосообщения, байт | `26214400` (25 МиБ) |
+| `MAX_VIDEO_NOTE_SIZE_BYTES` | Максимальный размер видеокружка, байт | `26214400` (25 МиБ) |
 | `CORS_ORIGINS` | Разрешённые origin через запятую | `http://localhost:5173` |
 
 ## Тесты и линт
